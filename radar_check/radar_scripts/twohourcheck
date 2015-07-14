@@ -1,0 +1,20 @@
+#!/bin/bash
+UTCHOUR=`date -u +"%H"`
+MINHOUR="2"
+
+DATADIR="/data/ros/fitacf"
+FILENAME=`ls -1t $DATADIR/*.fitacf | head -n 1`
+
+# wait until we're at least 18 hours into the day.. hopefully some scatter will be spotted by now
+if [ "$UTCHOUR" -ge "$MINHOUR" ]
+    then
+        # get number of range gates, and number of range gates with probable scatter according to fitacf
+        NLAGS=`cat $FILENAME | dmapdump | grep nlag | tr -cd '\n[:digit:]' | xargs | sed -e 's/\ /+/g' | bc | head -n 1`
+        NRANG=`cat $FILENAME | dmapdump | grep nrang | tr -cd '\n[:digit:]' | xargs | sed -e 's/\ /+/g' | bc| head -n 1`
+        LAGRATIO=`echo $NRANG / $NLAGS | bc`
+	echo $LAGRATIO
+        exit $LAGRATIO
+fi
+exit 1
+
+~                                                                                                                                                                                                                   
