@@ -1,0 +1,16 @@
+#!/bin/bash
+FILES=/data/ros/fitacf/*.fitacf
+MINDIFF="100000"
+for f in $FILES
+do
+      NOW=`date +%s`
+      FILETIME=`stat -c %Y $f`
+      DIFF=`echo $NOW-$FILETIME | bc`
+      if [ "$DIFF" -lt 3600 ]
+         then
+         MINDIFF="$DIFF"
+      fi
+done
+
+echo $MINDIFF
+

@@ -1,0 +1,4 @@
+#!/bin/bash
+# check for number of processes with scan in the name, should be no more than three 
+ps aux | grep "scan" | wc -l
+

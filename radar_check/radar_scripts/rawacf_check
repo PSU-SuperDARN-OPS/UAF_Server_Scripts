@@ -1,0 +1,5 @@
+#!/bin/bash
+# checks the number of rawacf files written in past 26 hours
+find /data/radar/data/rawdata/ -mmin -1565 -ls | grep rawacf | wc -l
+
+

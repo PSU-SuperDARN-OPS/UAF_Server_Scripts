@@ -1,0 +1,2 @@
+#!/bin/bash
+df -P | awk {'print $5'} | tail -n +2 | sed 's/.$//' | sort -r | head -n 1
