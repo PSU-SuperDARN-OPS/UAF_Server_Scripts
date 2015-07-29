@@ -1,0 +1,11 @@
+#!/bin/sh
+cd $HOME
+$HOME/src/cp_files dat dat
+$HOME/src/cp_files fit fit
+$HOME/src/cp_files fit inx
+$HOME/src/cp_files raw rawacf
+$HOME/src/cp_files fit fitacf
+$HOME/src/cp_files snd snd
+#
+#$HOME/src/cdproc
+
