@@ -1,0 +1,135 @@
+#!/bin/bash
+
+SD_DATA_PATH=/raid/SuperDARN/data/fit
+
+year=$1
+radar=$2
+
+# bit of script to extract yr mo dy hr mn from file name
+splitfname() {
+
+  fname=${1}
+  fleaf=${fname##*/}
+  fpath=${fname%/*}
+
+  sfx=${fleaf##*.}
+  tmp=${fleaf%.*}
+
+  case ${sfx} in
+  gz)
+    ftype=${tmp##*.}
+    tmp=${tmp%.*}
+    ;;
+  bz2)
+    ftype=${tmp##*.}
+    tmp=${tmp%.*}
+    ;;
+   *) 
+    ftype=${sfx}
+    sfx=""
+    ;;
+  esac
+  chn=""
+  stid=${tmp##*.}
+
+  if test ${#stid} -ne 3
+  then
+    chn=${stid}
+    tmp=${tmp%.?}
+    stid=${tmp##*.}
+    
+  fi
+
+  froot=${tmp%.*}
+  yr=$((${fleaf:0:4}))
+  mo=`echo ${fleaf:4:2}|sed 's/^0*//'`
+  dy=`echo ${fleaf:6:2}|sed 's/^0*//'`
+  hr=`echo ${fleaf:9:2}|sed 's/^0*//'`
+  mn=`echo ${fleaf:11:2}|sed 's/^0*//'`
+  if [[ -z "$hr" ]] ; then  
+      hr=0 
+  fi
+  if [[ -z "$mn" ]] ; then 
+      mn=0 
+  fi
+}
+
+# bit of script to convert yr-mo-dy to doy 
+d_o_y(){
+
+lyr=$1
+lmo=$2
+ldy=$3
+
+declare -a cdmons=(31 59 90 120 151 181 212 243 273 304 334 365)
+
+if [ $((${lyr} % 4)) -eq 0 ] 
+then
+    for i in 1 2 3 4 5 6 7 8 9 10 11
+    do 
+	cdmons[$i]=$((${cdmons[$i]}+1))
+    done
+fi
+
+if [ ${lmo} -eq 1 ] 
+then 
+    doy=${ldy} 
+else 
+    ind=$((${lmo}-2))
+    ndy=$((${ldy}))
+    doy=$((${cdmons[${ind}]}+${ndy})) 
+fi
+}
+
+
+for mo in 1 2 3 4 5 6 7 8 9 10 11 12
+ do
+    cal_days=(`cal $mo $year | grep -v "[a-z]"`)
+    last=${#cal_days[*]}
+    cal_dates=${cal_days[@]:0:$last}
+    if [ $mo -lt 10 ] 
+    then mo=0$mo
+    fi
+    for day in $cal_dates
+    do
+	if [ $day -lt 10 ] 
+	then day=0$day
+	fi
+	flst=`ls -1 $SD_DATA_PATH/$year/$mo.$day/*$radar* 2>/dev/null`
+	for file in $flst 
+	do
+	    flist[${#flist[*]}]="${file} "
+	done
+    done
+#    echo ${#flist[@]}
+done
+
+flast=${flist[0]}
+splitfname $flast
+d_o_y $yr $mo $dy
+dymns=$((${doy}*24*60))
+hrmns=$((${hr}*60))
+timel=$((${dymns}+${hrmns}+${mn}))
+
+THRESH=240
+
+for file in ${flist[@]} 
+do
+    splitfname $file
+    d_o_y $yr $mo $dy
+    dymns=$((${doy}*24*60))
+    hrmns=$((${hr}*60))
+    time=$((${dymns}+${hrmns}+${mn}))
+#    echo $yr $mo $dy $hr $mn $doy $time
+    if [ $(($time-$timel)) -gt $THRESH ]
+    then
+	echo *******GAP********
+	echo $flast
+	echo $file
+	echo $(($time-$timel)) Minutes
+	echo ******GAP*********
+	echo " "
+   fi
+    timel=$time
+    flast=$file
+done
