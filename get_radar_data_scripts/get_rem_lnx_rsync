@@ -1,0 +1,354 @@
+#!/bin/sh
+source ${HOME}/.bash_profile
+
+if [[ -z "$1" ]]
+then
+  echo "Must specify radar computer name as first argument"
+  echo "Usage: $0 RADAR [USER] [DSTUB]"
+  echo "USER and DSTUB are optional cmdline arguments to override radar config"
+  echo "Advanced settings go into config file: .<RADAR>.config"
+  exit 0
+fi
+SCP_LIMIT="1000000"
+MAKE_FIT_CMD="/opt/radar/rst/bin/make_fit"
+RADAR=$1
+CONFIG="${HOME}/.${RADAR}.config"
+if [ -f  $CONFIG ]
+then
+  source "${CONFIG}"
+fi
+
+if [[ -n "$2" ]]
+then
+  USR=$2
+fi
+if [[ -n "$3" ]]
+then
+  DSTUB=$3
+fi
+
+
+
+PULLDIR=$HOME/daily_site_data_pull
+RDIR=tmp_data/
+
+echo "$RADAR : $USR : $DSTUB : $PULLDIR : $SCP_LIMIT"
+
+pidfile=/tmp/get_rem_lnx_$1.pid
+
+######## 
+cleanup()
+# example cleanup function
+{
+  echo -e "Cleaning up tmpfiles"
+  return 0 
+}
+ 
+control_c()
+# run if user hits control-c
+{
+  echo -en "\n*** Cancel request detected, Exiting ***\n"
+  cleanup
+  rm $pidfile
+  exit $?
+}
+ 
+# trap keyboard interrupt (control-c)
+trap control_c SIGINT
+ 
+prepfvars() {
+   echo "prepfvars"
+#  unset fleaf,froot,fpath,sfx,tmp,ftype,chn,stid,yr,mo,dy
+}
+
+splitfname() {
+
+  fname=${1}
+  fleaf=${fname##*/}
+  fpath=${fname%/*}
+
+  sfx=${fleaf##*.}
+  tmp=${fleaf%.*}
+  case ${sfx} in
+  gz)
+    ftype=${tmp##*.}
+    tmp=${tmp%.*}
+    ;;
+  bz2)
+    ftype=${tmp##*.}
+    tmp=${tmp%.*}
+    ;;
+   *) 
+    ftype=${sfx}
+    sfx=""
+    ;;
+  esac
+  chn=""
+  stid=${tmp##*.}
+
+  if test ${#stid} -ne 3
+  then
+    chn=${stid}
+    tmp=${tmp%.?}
+    stid=${tmp##*.}
+    
+  fi
+
+  froot=${tmp%.*}
+  yr=${fleaf:0:4}
+  mo=${fleaf:4:2}
+  dy=${fleaf:6:2}
+}
+
+######################################################################
+#
+#  UNPACK_SAVE
+#  copies the file from the CD naming convention to the normal convention
+#  and writes the file to the appropriate directory.
+#
+######################################################################
+unpack_save() {
+  OLD_IFS=$IFS
+  unset IFS
+
+  raid_dir="/raid0/SuperDARN/data/"
+
+  fname=${1#${PULLDIR}/}
+  #echo "Unpack: $fname $1"
+  #prepfvars
+  splitfname $fname
+
+  case $ftype in
+    rawacf) 
+      out_dir=${raid_dir}"dat/"
+      fitname="${froot}.${stid}"
+      if [ "$GENERATE_FIT"  = "1" ]
+      then 
+        if [[ -n $chn ]]
+        then
+          fitname="${fitname}.${chn}"
+        fi
+        rawname="${fitname}.rawacf"
+        fitname="${fitname}.fitacf"
+        echo " $ftype : Rawacf: ${fname} ${rawname} :: Corresponding Fitacf: ${fitname}"
+
+        if [[ $md5list =~ ${fitname} ]] 
+        then
+          echo "   Fitacf is in md5list for transfer, file generate aborted"
+        else
+          fit_dir=${raid_dir}"fit/"
+          fit_file=$fit_dir$yr/$mo.$dy/$fitname
+          echo "   Check to see if fitacf is on disk: $fit_file"
+          if [[ -e $fit_file ]]
+          then
+            echo "     Fitacf file exists on disk: $fit_file, file generate aborted"
+          else 
+            echo "     Fitacf file does not exist on disk: $fit_file, generating FITACF file"
+            case $sfx in
+              bz2)
+                echo "Decompress bzip2"
+                bunzip2 -vkf ${1}
+                ;;
+              gz) 
+                echo "Decompress gzip"
+                gunzip -cvf ${1} > ${PULLDIR}/${fitname}
+                ;;
+            esac  
+            gen_error=0
+            ${MAKE_FIT_CMD} -new ${PULLDIR}/${rawname} > ${PULLDIR}/${fitname} 
+            if test $? -ne 0 ; then
+              echo "Fitacf generate error: ${MAKE_FIT_CMD} -new ${PULLDIR}/${rawname} > ${PULLDIR}/${fitname}"
+              gen_error=1
+            fi
+            f_dir=$fit_dir$yr/$mo.$dy
+            if [ ! -d "$f_dir" ]; then
+              if [ -f "$f_dir" ]; then
+                echo "ERROR: Storage Directory Location $f_dir exists but is regular file!!!!"
+                gen_error=1
+              else 
+                echo "Storage Directory Does Not Exist $f_dir"
+                echo "Creating storage directory $f_dir"
+                mkdir -p $f_dir
+                chown :radar $f_dir
+                chmod g+wr $f_dir
+              fi
+            fi
+            mv ${PULLDIR}/${fitname} $fit_file
+            if test $? -ne 0 ; then
+              echo "Fitacf generate error: mv $1 $storage_dir/$fname"
+              gen_error=1
+            fi
+          fi
+        fi  
+      fi
+      ;;
+    fitacf) 
+      out_dir=${raid_dir}"fit/"
+      ;;
+    *) out_dir=${raid_dir}"unsorted/";;
+  esac
+
+  storage_dir=$out_dir$yr/$mo.$dy
+  dir_error=0
+  if [ ! -d "$storage_dir" ]; then
+    if [ -f "$f_dir" ]; then
+      echo "ERROR: Storage Directory Location $storage_dir exists but is regular file!!!!"
+      dir_error=1
+    else 
+      echo "Storage Directory Does Not Exist $storage_dir"
+      echo "Creating storage directory $storage_dir"
+      mkdir -p $storage_dir
+      chown :radar $storage_dir
+      chmod g+wr $storage_dir
+    fi
+  fi
+
+
+  cp $1 $storage_dir/$fname
+  if test $? -eq 0 ; then
+    cp_error=0
+  else
+    echo "Copy error: cp $1 $storage_dir/$fname"
+    cp_error=1
+  fi
+  for user in $DATA_USERS
+  do
+    DATA="/home/${user}/${DSTUB}/"
+    echo "cp $1 ${DATA}"
+    cp $1 ${DATA}
+    if test $? -ne 0 ; then
+      echo "User copy error: cp $1 ${DATA}"
+      cp_error=1
+    fi
+  done
+  DATA=$HOME/${DSTUB}/
+  echo "mv $1 ${DATA}"
+  mv $1 ${DATA}
+  if test $? -eq 0 ; then
+    mv_error=0
+  else
+    echo "Mv error: mv $1 ${DATA}"
+    mv_error=1
+  fi
+# Final test of local copy
+  s_sum=`md5sum $storage_dir/$fname|awk '{print $1}'`
+  d_sum=`md5sum ${DATA}/$fname|awk '{print $1}'`
+  if [ $fsum = $local_sum ]
+  then
+    sum_error=0
+  else
+    sum_error=1
+  fi
+  if test $sum_error -eq 0 ; then
+    DATA=$HOME/${DSTUB}/
+    echo "rm ${DATA}/$fname"
+    rm ${DATA}/$fname
+  else
+    echo "Local Checksum comparison fail: ${DATA}/$1"
+  fi 
+  IFS=$OLD_IFS
+}
+
+clean_remote_if_no_error() {
+  OLD_IFS=$IFS
+  unset IFS
+  if test $dir_error -eq 0; then
+    if test $sum_error -eq 0; then
+      if test $cp_error -eq 0; then
+        if test $mv_error -eq 0; then
+          echo "ssh -l ${USR} ${RADAR} \"rm ${pname}\""
+          ssh -l ${USR} ${RADAR} "rm ${pname}"
+        fi
+      fi
+    fi
+  fi 
+  IFS=$OLD_IFS
+}
+
+
+
+
+################# MAIN ################
+echo "Make_fit: $MAKE_FIT_CMD"
+if [ -e $pidfile ]; then
+pid=`cat $pidfile`
+if kill -0 &>1 > /dev/null $pid; then
+echo "Already running"
+exit 1
+else
+rm $pidfile
+fi
+fi
+echo $$ > $pidfile
+
+
+##Generate remote md5sum list 
+#`ssh -l ${USR} ${RADAR} "cd ${RDIR}; md5sum *.* > /tmp/${RADAR}_md5sum.text"`
+#scp ${USR}@${RADAR}:/tmp/${RADAR}_md5sum.text $PULL_DIR 
+
+#Pull remote file list
+md5list=`ssh -l ${USR} ${RADAR}  "cd ${RDIR}; md5sum *.*"`
+if [[ -z $md5list ]]
+then
+  echo "No Remote Files"
+  exit 0
+fi
+IFS=$(echo -en "\n\b") 
+echo "MD5list obtained"
+echo -n $md5list
+sleep 5
+for item in $md5list
+do
+  OLD_IFS=$IFS
+  unset IFS
+  fname=$(echo "${item}" | awk '{print $2}')
+  fsum=$(echo "${item}" | awk '{print $1}')
+  pname="${RDIR}///${fname}"
+  pname=$(echo "${pname}" | sed s#//*#/#g)
+#  echo "Md5sum: ${fsum} :: Remote Path: ${pname}"
+#  echo  "Copy remote file to local staging directory"
+#  TODO: replace scp with rsync so that transfers can be resumed?
+# echo "scp -l ${SCP_LIMIT} ${USR}@${RADAR}:${pname} ${PULLDIR}"
+
+  echo "rsync --bwlimit=${SCP_LIMIT} -P --rsh=ssh --timeout=900 ${USR}@${RADAR}:${pname} ${PULLDIR}"
+  rsync --bwlimit=${SCP_LIMIT} -P --rsh=ssh --timeout=900 ${USR}@${RADAR}:${pname} ${PULLDIR}
+
+  if test $? -eq 0
+  then
+      local_sum=`md5sum ${PULLDIR}/${fname}|awk '{print $1}'`
+#      echo  "local md5sum: $local_sum"
+      if [ $fsum = $local_sum ]
+      then
+        echo "Unpacking: $fname"
+        unpack_save ${PULLDIR}/${fname}
+        clean_remote_if_no_error
+        rm ${PULLDIR}/${fname}
+        retval=$?
+        if [ $retval -ne 0 ]; then
+          sfx=${fname##*.}
+          tmp=${fname%.*}
+          case ${sfx} in
+            gz)
+              rm ${PULLDIR}/${tmp}
+              ;;
+            bz2)
+              rm ${PULLDIR}/${tmp}
+              ;;
+          esac
+        fi
+      else 
+        echo -e "BAD checksum for downloaded file $fname"
+        echo -e " remote: $rem_sume"
+        echo -e "  local: $local_sum"
+      fi
+
+  else
+      echo -e "Trouble downloading ${USR}@${RADAR}:${pname}"
+  fi
+  IFS=$OLD_IFS
+done
+unset IFS
+
+#echo "Files remaining in local staging dir:"
+#ls -1 ${PULLDIR}
+rm $pidfile
